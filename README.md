@@ -2,6 +2,10 @@
 
 When a Path of Exile developer comments in a thread on r/pathofexile or r/PathOfExile2, this bot keeps a stickied comment at the top of that thread with a link to each of their replies. Readers can jump to what the developers said without scrolling the whole thread.
 
+![The stickied comment at the top of a thread, with one line per developer reply](docs/sticky-comment.png)
+
+Redrawn to look like Reddit.
+
 Each line has the developer's name, links to the reply on new and old Reddit, and its first 30 words. When the comment fills up, the bot carries on in a reply to itself.
 
 It started as kjennett's GGGCommentBot and has been modified by multiplicitypoe.
