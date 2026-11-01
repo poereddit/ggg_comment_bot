@@ -1,0 +1,4 @@
+.env
+*.pickle
+*.bak
+__pycache__/

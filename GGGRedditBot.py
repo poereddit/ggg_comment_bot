@@ -1,25 +1,48 @@
+import os
 import praw
 import pickle
+import re
 import time
 from datetime import datetime
+
+# Load KEY=VALUE pairs from a .env file next to this script into the environment
+def load_env(path=os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')):
+    try:
+        with open(path) as env_file:
+            for line in env_file:
+                line = line.strip()
+                if not line or line.startswith('#') or '=' not in line:
+                    continue
+                key, value = line.split('=', 1)
+                os.environ.setdefault(key.strip(), value.strip().strip('"\''))
+    except FileNotFoundError:
+        pass
 
 # Debug flag (True if running for testing purposes, False if running for production)
 debug = False
 
 # START VARIABLES #
-# APP Variables and Login Information
-user_agent_string = 'PoE GGG Bot'                       # Identify the Bot
-account_username = 'account name'                                   # Reddit Account Username
-account_password = 'password here'                                   # Reddit Account Password
-client_id_string = 'client id here' 
-client_secret_string = 'client secret here'
+# APP Variables and Login Information (set in .env, see .env.example)
+load_env()
+user_agent_string = os.environ.get('REDDIT_USER_AGENT', 'PoE GGG Bot')
+account_username = os.environ.get('REDDIT_USERNAME')
+account_password = os.environ.get('REDDIT_PASSWORD')
+client_id_string = os.environ.get('REDDIT_CLIENT_ID')
+client_secret_string = os.environ.get('REDDIT_CLIENT_SECRET')
+
+missing = [name for name, value in (('REDDIT_USERNAME', account_username),
+                                    ('REDDIT_PASSWORD', account_password),
+                                    ('REDDIT_CLIENT_ID', client_id_string),
+                                    ('REDDIT_CLIENT_SECRET', client_secret_string)) if not value]
+if missing:
+    raise SystemExit('Missing environment variables: ' + ', '.join(missing) + ' (see .env.example)')
 
 # Setup and Use Variables
-subreddit_name = 'pathofexile'                          # Subreddit (sets subreddit to parse)
+subreddit_name = os.environ.get('SUBREDDIT_NAME', 'pathofexile')                          # Subreddit (sets subreddit to parse)
 my_comments_file = "my_comments.pickle"                 # Location for Bot Comment Links per Submission
 last_comments_file = "last_comments.pickle"             # Location for Username of Last GGG post in Submission
 connect_timeout = 10                                    # Timeout delay (in seconds) before next connection attempt
-snippet_word_count = 14                                 # Snippet Word Count (number of words to include in snippet)
+snippet_word_count = 30                                 # Snippet Word Count (number of words to include in snippet)
 context_depth = 10                                       # Permalink will provide context by showing parents of this many levels up from the linked comment
 ts_format = '%I:%M%p %m/%d/%y UTC'                      # Timestamp format string (for more info => https://docs.python.org/2/library/datetime.html#strftime-and-strptime-behavior)
 
@@ -32,11 +55,12 @@ def header_string_format():
 # comment - reddit comment object
 # word_count - number of words to create, specified by variable snippet_word_count
 def create_snippet(comment, word_count):
-    word_list = comment.body.split()                    # split comment body
+    body = re.sub(r'!\[[^\]]*\]\([^)]*\)', '(gif)', comment.body)  # replace embedded media (e.g. ![gif](giphy|..), uploaded images/emotes) which Reddit rejects when nested in our comment
+    word_list = body.split()                            # split (sanitized) comment body
     snippet = str.join(' ', word_list[0:word_count])    # join from 0 to max of word_count (by whitespace) words in list
     if (len(word_list) > word_count):                   # add ... to end of snippet if snippet contains 10 words, but list contained more
         snippet = snippet + '...'
-    return snippet
+    return snippet or '(gif)'                            # never return empty (media-only comments)
 
 # Format string for each post
 # {time} - Formatted Timestamp
@@ -55,6 +79,8 @@ def footer_string_format():
 
 # List of GGG Employees --- TODO NEEDS UPDATED
 ggg_emps = [
+    'Kelly_GGG',
+    'Community_Team',
     'chris_wilson',
     'Bex_GGG',
     'Negitivefrags',
@@ -66,6 +92,8 @@ ggg_emps = [
     'RhysGGG',
     'Dan_GGG',
     'pantherNZ',
+    'AlexDenfordGGG',
+    'M59Gar',
     'Novynn',
     'Fitzy_GGG',
     'Hrishi_GGG',
@@ -84,6 +112,11 @@ ggg_emps = [
     'Natalia2_GGG',
     'viperesque',
     'ZaccieA',
+    'Henry_GGG',
+    'Nick_GGG',
+    'Neon_GGG',
+    'Belakay_ggg',
+    'MatthewD_GGG',
 ]
 
 if (debug):
@@ -150,7 +183,7 @@ def newGGGComment(comment):
     if (link.id in my_comments):                                                    # If bot has responded to submission
         edit = True                                                                 # Set edit flag to true
         myReply = reddit.comment(my_comments[link.id])                              # Get the comment to edit 
-        if (len(myReply.body) > 9500):                                              # Checks if current comment associated with post is full
+        if (len(myReply.body) > 7200):                                              # Checks if current comment associated with post is full
             newSelfReply = True                                                     # If there is a footer, it will post the new comment in reply to itself instead of a top level comment
             edit = False
             if footer_string_format() not in myReply.body:                          # If no footer, add it and recurse
@@ -184,21 +217,101 @@ def newGGGComment(comment):
     last_comments[link.id] = comment.author.name                                    # Set GGG last comment username to be current comment username
     save_submissions(last_comments, last_comments_file)                             # Save updated dictionary
 
-while True:                                                                                         # main loop to keep bot running
-    try:                                                                                            # try around stream in case connection fails
-        for comment in subreddit.stream.comments(skip_existing = True):                             # open up a stream of comments, starting from this exact instance onward
-            try:                                                                                    # try in case failure during parse
-                # print(str(count) + ': ' + comment.author.name)                                    # Used to log display progress. Isn't needed
-                # count += 1                                                                        # Updated counter to visualize progress. Isn't needed
-                if comment.author.name in ggg_emps:                                                 # check if comment author in ggg_emps list
-                    now = datetime.now()
-                    print('Found GGG comment to reply to at {}: /u/{}'.format(now, comment.author.name))
-                    newGGGComment(comment)
+# Discovery configuration
+# Instead of praw's comment stream (which silently drops comments during high-volume
+# bursts, and skips everything posted during a reconnect when using skip_existing=True),
+# we poll two sources and de-duplicate against a persistent seen-set so nothing is
+# missed and nothing is aggregated twice:
+#   1. subreddit.comments(limit=100)      -> low latency for the common case
+#   2. each GGG employee's own history    -> guarantee: a single user's comment history
+#                                            never overflows from subreddit volume or a
+#                                            reconnect gap, so we always catch it eventually
+processed_file = "processed_" + subreddit_name + ".pickle"  # Persistent set of handled comment ids (per subreddit)
+poll_interval = 15                                          # Seconds between primary newest-comment polls
+backfill_interval = 300                                     # Seconds between full employee-history safety sweeps
+history_limit = 25                                          # Employee comments to scan per sweep
+max_seen = 20000                                            # Cap on remembered comment ids (bounds memory/pickle size)
+
+# Load the seen-set (stored as an ordered list so we can trim the oldest ids)
+seen_list = load_submissions(processed_file)                # Returns {} on first run (no file yet)
+first_run = not isinstance(seen_list, list)                 # {} (default) means we have never run with the new format
+if first_run:
+    seen_list = []
+seen = set(seen_list)
+
+# Remember a comment id as handled and persist it, trimming the oldest ids past max_seen
+def remember(comment_id):
+    if comment_id in seen:
+        return
+    seen.add(comment_id)
+    seen_list.append(comment_id)
+    if len(seen_list) > max_seen:
+        old = seen_list.pop(0)
+        seen.discard(old)
+    save_submissions(seen_list, processed_file)
+
+# Handle one comment: skip if already seen; otherwise, if a GGG employee wrote it,
+# aggregate it. record_only=True seeds the baseline on first run without replying,
+# so we don't re-aggregate comments that were already handled before this restart.
+# Only GGG comments are remembered -- the seen-set stays small and never evicts an id
+# that an employee-history backfill could still surface (which would double-post).
+def handle(comment, record_only=False):
+    if comment is None or comment.id in seen:
+        return
+    author = comment.author.name if comment.author else None                        # author is None for deleted/removed accounts
+    if author not in ggg_emps:                                                      # only care about GGG employees; ignore everyone else
+        return
+    if not record_only:
+        now = datetime.now()
+        print('Found GGG comment to reply to at {}: /u/{}'.format(now, author), flush=True)
+        newGGGComment(comment)
+    remember(comment.id)                                                            # remember only handled GGG comments
+
+# On first run, mark everything currently visible as seen (without replying) so the bot
+# only acts on comments that appear from now on -- matching the old skip_existing=True behaviour.
+if first_run:
+    print('First run: seeding baseline seen-set...', flush=True)
+    try:
+        for comment in subreddit.comments(limit=100):
+            handle(comment, record_only=True)
+        for emp in ggg_emps:
+            try:
+                for comment in reddit.redditor(emp).comments.new(limit=history_limit):
+                    handle(comment, record_only=True)
             except Exception as e:
-                print('Failed during some iteration of the for loop.')
-                print(e)
+                if '404' not in str(e):                                              # 404 = account gone/renamed; skip quietly
+                    print('Baseline seed failed for /u/{}: {}'.format(emp, e), flush=True)
                 continue
     except Exception as e:
-        print('Had an error: {}'.format(e))
-        time.sleep(connect_timeout)                                                                 # If failed to stream comments or connect properly, wait for specified duration before trying again
+        print('Baseline seed error: {}'.format(e), flush=True)
+    print('Seeded baseline with {} comment ids'.format(len(seen)), flush=True)
+
+print('Started bot (polling mode) on r/{}'.format(subreddit_name), flush=True)
+last_backfill = 0.0                                                                  # Force a full employee sweep on the first iteration
+while True:                                                                          # main loop to keep bot running
+    try:
+        # 1. Primary pass: newest comments in the subreddit (low latency)
+        for comment in subreddit.comments(limit=100):
+            try:
+                handle(comment)
+            except Exception as e:
+                print('Failed handling comment {}: {}'.format(getattr(comment, 'id', '?'), e), flush=True)
+                continue
+        # 2. Safety-net pass: scan each GGG employee's own recent history so a comment
+        #    dropped by a firehose burst or a reconnect gap is still caught.
+        if time.time() - last_backfill >= backfill_interval:
+            for emp in ggg_emps:
+                try:
+                    for comment in reddit.redditor(emp).comments.new(limit=history_limit):
+                        if str(comment.subreddit).lower() == subreddit_name.lower():  # only this subreddit; ignore their comments elsewhere
+                            handle(comment)
+                except Exception as e:
+                    if '404' not in str(e):                                          # 404 = account gone/renamed; skip quietly
+                        print('Backfill failed for /u/{}: {}'.format(emp, e), flush=True)
+                    continue
+            last_backfill = time.time()
+    except Exception as e:
+        print('Had an error: {}'.format(e), flush=True)
+        time.sleep(connect_timeout)                                                 # On connection failure, wait before retrying (no comments are skipped: the seen-set persists)
         continue
+    time.sleep(poll_interval)                                                        # Pause between polls to stay within rate limits

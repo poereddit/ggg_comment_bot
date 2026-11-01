@@ -9,10 +9,9 @@ A small Reddit bot for the Path of Exile community. By kjennet, modified by mult
    - Short Description
    - Redirect URI (I don't think it matters, I just used google)
    - Create App
-4. Set `client_id_string` to value under personal use script in your reddit app
-5. Set `client_secret_string` to reddit app secret key
-6. Set `account_username` to the reddit bot account name
-7. Set `account_password` to the reddit bot account password
-8. Change any of the other variables you want
+4. Copy `.env.example` to `.env` and fill in the bot account username and password, the app's client id (under "personal use script"), and the app's secret.
+5. Optionally set `SUBREDDIT_NAME` in `.env` (defaults to `pathofexile`). Run a second copy from its own directory with `pathofexile2` to cover r/pathofexile2, since each copy keeps its own state files.
+6. Run `python3 GGGRedditBot.py`. The bot keeps its state in `.pickle` files in the working directory.
+7. Change any of the other variables at the top of the script you want
 
 
