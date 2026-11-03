@@ -4,15 +4,15 @@ When a Path of Exile employee comments in a thread, this app keeps one stickied 
 
 ## Status
 
-Written and tested locally. Never run on Devvit. Needs `devvit login` and a playtest before anything else.
+Playtested on Devvit 0.15.2 in a private test subreddit. Verified there: a roster member's comment creates the stickied summary from the app account, later comments edit it, the app's own comments are skipped, and the cron sweep back-fills comments the trigger missed.
 
-What is checked: types compile, the snippet and line formats match the Python bot on 300+ random inputs, and the append logic (create, edit, full-comment chaining, two comments arriving together, a deleted summary, a failed Reddit call) passes against in-memory fakes of Redis and the Reddit API.
+Not yet checked: a real GGG account (only a test account was on the roster), chaining past the 7,200 character limit on a live thread, and what happens when a thread's summary is deleted by a mod.
 
-What is not checked, and needs a playtest in a test subreddit:
-- The app account can sticky and distinguish its own comment (`distinguish(true)` after `submitComment`).
-- The cron task in `devvit.json` is scheduled on install.
-- `onCommentCreate` delivers `comment.author`, `comment.permalink` and `comment.postId` as the types say.
-- The 24 hour limit on the sweep behaves on a real employee account.
+Devvit notes learned on the way:
+- Use `devvit` and `@devvit/web` at the same version. 0.14.2 pulled in a second copy of `@devvit/server`, which broke every trigger with "No context found".
+- In the `onCommentCreate` payload, `comment.author` is a user id (`t2_...`). The username is `event.author.name`.
+- Trigger endpoints must answer with a `Content-Length` header.
+- A roster name with no Reddit account is logged and skipped by the sweep.
 
 ## How it works
 

@@ -1,5 +1,5 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
-import {createServer, getServerPort, scheduler} from '@devvit/web/server'
+import {createServer, getServerPort} from '@devvit/web/server'
 import type {OnCommentCreateRequest} from '@devvit/web/shared'
 import {aggregate, loadRoster, sweep} from './aggregator.ts'
 
@@ -32,27 +32,18 @@ async function onCommentCreate(req: IncomingMessage): Promise<unknown> {
   return {status: added ? 'aggregated' : 'skipped'}
 }
 
-// The cron job is created here instead of in devvit.json: a cron entry in the config made installs
-// fail ("No context found" during OnAppInstall) on devvit 0.14.2.
-const SWEEP_CRON = '*/10 * * * *'
-async function onAppInstall(): Promise<unknown> {
-  const jobs = await scheduler.listJobs()
-  if (!jobs.some(j => j.name === 'sweep' && 'cron' in j)) {
-    await scheduler.runJob({name: 'sweep', cron: SWEEP_CRON})
-  }
-  return {status: 'ok'}
-}
-
 const server = createServer(async (req, res) => {
   try {
     if (req.method !== 'POST') return send(res, 404, {error: 'not found'})
     switch (req.url) {
       case '/internal/triggers/on-comment-create':
         return send(res, 200, await onCommentCreate(req))
-      case '/internal/on/app/install':
-        return send(res, 200, await onAppInstall())
       case '/internal/jobs/sweep':
-        return send(res, 200, await sweep())
+      {
+        const result = await sweep()
+        console.log(`sweep; result=${JSON.stringify(result)}`)
+        return send(res, 200, result)
+      }
       default:
         return send(res, 404, {error: 'not found'})
     }

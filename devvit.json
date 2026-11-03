@@ -9,13 +9,13 @@
     "redis": true
   },
   "triggers": {
-    "onAppInstall": "/internal/on/app/install",
     "onCommentCreate": "/internal/triggers/on-comment-create"
   },
   "scheduler": {
     "tasks": {
       "sweep": {
-        "endpoint": "/internal/jobs/sweep"
+        "endpoint": "/internal/jobs/sweep",
+        "cron": "*/10 * * * *"
       }
     }
   },
