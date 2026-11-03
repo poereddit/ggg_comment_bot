@@ -98,6 +98,18 @@ test('a deleted summary is replaced instead of failing', async () => {
   assert.equal(comments.size, 1)
 })
 
+test('a removed summary, which Reddit still returns, is replaced too', async () => {
+  const {deps, comments} = fakes()
+  await aggregate(c('t1_a', 'Carol_GGG'), roster, deps)
+  const old = [...comments.values()][0]!
+  old.body = '[removed]'
+  assert.equal(await aggregate(c('t1_b', 'Dave_GGG'), roster, deps), true)
+  assert.equal(comments.size, 2)
+  const fresh = [...comments.values()][1]!
+  assert.equal(fresh.sticky, true)
+  assert.ok(fresh.body.startsWith(HEADER) && fresh.body.includes('Dave_GGG'))
+})
+
 test('a failed Reddit call leaves the comment unmarked so the sweep retries it', async () => {
   const {deps, kv} = fakes()
   deps.reddit.submitComment = async () => { throw new Error('RATELIMIT') }

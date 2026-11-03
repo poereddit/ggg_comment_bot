@@ -74,9 +74,12 @@ async function findAggregation({redis, reddit}: Deps, postId: string) {
   const id = await redis.get(aggKey(postId))
   if (!id) return null
   try {
-    return await reddit.getCommentById(id)
+    const comment = await reddit.getCommentById(id)
+    // Reddit still returns a deleted or mod-removed comment, with its text replaced. It can't be edited.
+    if (comment.body === '[deleted]' || comment.body === '[removed]') return null
+    return comment
   } catch {
-    return null // deleted or inaccessible: start a new one
+    return null // inaccessible: start a new one
   }
 }
 
