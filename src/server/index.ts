@@ -11,20 +11,24 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
 }
 
 function send(res: ServerResponse, status: number, body: unknown): void {
-  res.writeHead(status, {'content-type': 'application/json'})
-  res.end(JSON.stringify(body))
+  // The Devvit trigger wrapper rejects responses without a Content-Length.
+  const text = JSON.stringify(body)
+  res.writeHead(status, {'content-type': 'application/json', 'content-length': Buffer.byteLength(text)})
+  res.end(text)
 }
 
 async function onCommentCreate(req: IncomingMessage): Promise<unknown> {
   const event = (await readJson(req)) as OnCommentCreateRequest
   const c = event.comment
+  console.log(`comment-create; id=${c?.id} author=${event.author?.name} postId=${c?.postId} keys=${Object.keys(event).join(',')}`)
   if (!c) return {status: 'ignored'}
   // Cheap exit for the vast majority of comments, before any Reddit or Redis calls.
   const roster = await loadRoster()
   const added = await aggregate(
-    {id: c.id, author: c.author, body: c.body, permalink: c.permalink, postId: c.postId, createdAtMs: c.createdAt},
+    {id: c.id, author: event.author?.name ?? c.author, body: c.body, permalink: c.permalink, postId: c.postId, createdAtMs: c.createdAt},
     roster,
   )
+  console.log(`comment-create; roster=${roster.size} result=${added ? 'aggregated' : 'skipped'}`)
   return {status: added ? 'aggregated' : 'skipped'}
 }
 
