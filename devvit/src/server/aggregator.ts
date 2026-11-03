@@ -24,6 +24,9 @@ const lockKey = (postId: string) => `lock:${postId}`
 export type CommentLike = {
   id: string
   body: string
+  removed?: boolean
+  spam?: boolean
+  parentId?: string
   edit(opts: {text: string}): Promise<unknown>
   reply(opts: {text: string; runAs: 'APP'}): Promise<CommentLike>
   distinguish(makeSticky?: boolean): Promise<void>
@@ -70,13 +73,23 @@ async function withPostLock<T>(redis: Deps['redis'], postId: string, fn: () => P
   throw new Error(`could not lock ${postId}`)
 }
 
+// A deleted or mod-removed comment is still returned. To a mod account like the app, a removed one
+// keeps its text, so the removed and spam flags are checked as well as the placeholder text.
+const isGone = (c: CommentLike) => c.removed === true || c.spam === true || c.body === '[deleted]' || c.body === '[removed]'
+
 async function findAggregation({redis, reddit}: Deps, postId: string) {
   const id = await redis.get(aggKey(postId))
   if (!id) return null
   try {
     const comment = await reddit.getCommentById(id)
-    // Reddit still returns a deleted or mod-removed comment, with its text replaced. It can't be edited.
-    if (comment.body === '[deleted]' || comment.body === '[removed]') return null
+    // agg: points at the newest comment in the chain. If it or any comment above it, up to the
+    // stickied head, was removed, the summary starts again instead of continuing under it.
+    let cur: CommentLike = comment
+    for (let depth = 0; depth < 25; depth++) {
+      if (isGone(cur)) return null
+      if (!cur.parentId || !cur.parentId.startsWith('t1_')) break
+      cur = await reddit.getCommentById(cur.parentId)
+    }
     return comment
   } catch {
     return null // inaccessible: start a new one

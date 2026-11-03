@@ -12,8 +12,10 @@ function fakes() {
   class FakeComment implements CommentLike {
     id = `t1_bot${++n}`
     sticky = false
+    removed = false
     body: string
     parent: string
+    get parentId() { return this.parent }
     constructor(body: string, parent: string) {
       this.body = body
       this.parent = parent
@@ -116,4 +118,32 @@ test('a failed Reddit call leaves the comment unmarked so the sweep retries it',
   await assert.rejects(aggregate(c('t1_a', 'Carol_GGG'), roster, deps))
   assert.equal(kv.get('seen:t1_a'), undefined)
   assert.equal(kv.get('lock:t3_p1'), undefined)
+})
+
+
+test('a mod-removed summary, which keeps its text for the app, is replaced', async () => {
+  const {deps, comments} = fakes()
+  await aggregate(c('t1_a', 'Carol_GGG'), roster, deps)
+  const old = [...comments.values()][0]!
+  old.removed = true
+  assert.equal(await aggregate(c('t1_b', 'Dave_GGG'), roster, deps), true)
+  const fresh = [...comments.values()].at(-1)!
+  assert.notEqual(fresh.id, old.id)
+  assert.equal(fresh.sticky, true)
+})
+
+test('when the stickied head of a chained summary is removed, the next comment starts a new summary', async () => {
+  const {deps, comments} = fakes()
+  const long = 'word '.repeat(40)
+  let i = 0
+  while (comments.size < 2) await aggregate(c(`t1_x${++i}`, 'Carol_GGG', long), roster, deps)
+  const head = [...comments.values()][0]!
+  head.removed = true
+  const before = comments.size
+  assert.equal(await aggregate(c('t1_after', 'Dave_GGG'), roster, deps), true)
+  assert.equal(comments.size, before + 1)
+  const fresh = [...comments.values()].at(-1)!
+  assert.equal(fresh.parent, 't3_p1')
+  assert.equal(fresh.sticky, true)
+  assert.ok(fresh.body.includes('Dave_GGG'))
 })
