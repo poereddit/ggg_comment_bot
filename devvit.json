@@ -1,0 +1,31 @@
+{
+  "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
+  "name": "ggg-comment-bot",
+  "permissions": {
+    "reddit": {
+      "scope": "user"
+    },
+    "redis": true
+  },
+  "triggers": {
+    "onCommentCreate": "/internal/triggers/on-comment-create"
+  },
+  "scheduler": {
+    "tasks": {
+      "sweep": {
+        "endpoint": "/internal/jobs/sweep",
+        "cron": "*/10 * * * *"
+      }
+    }
+  },
+  "settings": {
+    "subreddit": {
+      "roster": {
+        "type": "paragraph",
+        "label": "GGG employee usernames",
+        "helpText": "One Reddit username per line, without u/. Lines starting with # are ignored.",
+        "defaultValue": "Kelly_GGG\nCommunity_Team\nchris_wilson\nBex_GGG\nNegitivefrags\nRory_Rackham\nOmnitect\nMark_GGG\nDaniel_GGG\nBlake_GGG\nRhysGGG\nDan_GGG\npantherNZ\nAlexDenfordGGG\nM59Gar\nNovynn\nFitzy_GGG\nHrishi_GGG\nFelipe_GGG\nMel_GGG\nSarah_GGG\nriandrake\nKieren_GGG\nHartlin_GGG\nBaltic_GGG\nKamilOrmanJanowski\nJeff_GGG\nStacey_GGG\nOpenarl\nNatalia_GGG\nNatalia2_GGG\nviperesque\nZaccieA\nHenry_GGG\nNick_GGG\nNeon_GGG\nBelakay_ggg\nMatthewD_GGG"
+      }
+    }
+  }
+}
