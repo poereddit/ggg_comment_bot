@@ -10,6 +10,10 @@ Each line has the developer's name, links to the reply on new and old Reddit, an
 
 It started as kjennett's GGGCommentBot and has been modified by multiplicitypoe.
 
+## Devvit version
+
+Reddit is closing public API access in March 2027, so the bot is being ported to Reddit's Devvit platform. The port lives in [`devvit/`](devvit/) and does the same job as an app installed on the subreddit. The Python script above keeps running until the app takes over.
+
 ## Running it
 
 You need Python 3 and a Reddit account that moderates the subreddit, since the bot stickies its own comment.
