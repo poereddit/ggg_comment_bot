@@ -7,6 +7,8 @@ import {type CommentLike, type Deps, aggregate} from './aggregator.ts'
 function fakes() {
   const kv = new Map<string, string>()
   const comments = new Map<string, FakeComment>()
+  // What findOwnSummary returns per post: summaries the app's account already has there.
+  const own = new Map<string, FakeComment[]>()
   const log: string[] = []
   let n = 0
   class FakeComment implements CommentLike {
@@ -38,9 +40,11 @@ function fakes() {
     reddit: {
       getCommentById: async id => { const c = comments.get(id); if (!c) throw new Error('404'); return c },
       submitComment: async ({id, text}) => { await tick(); log.push(`submit on ${id}`); return new FakeComment(text, id) },
+      findOwnSummary: async postId => own.get(postId) ?? [],
     },
   }
-  return {deps, kv, comments, log}
+  const existing = (body: string, parent = 't3_p1') => new FakeComment(body, parent)
+  return {deps, kv, comments, own, log, existing}
 }
 
 const roster = new Set(['carol_ggg', 'dave_ggg'])
@@ -146,4 +150,65 @@ test('when the stickied head of a chained summary is removed, the next comment s
   assert.equal(fresh.parent, 't3_p1')
   assert.equal(fresh.sticky, true)
   assert.ok(fresh.body.includes('Dave_GGG'))
+})
+
+// The Python bot's summary, as the app sees it once Reddit moves u/GGGCommentBot to the app.
+const pythonSummary = (...ids: string[]) =>
+  HEADER + ids.map(id => `\n\n[Carol_GGG - [link](https://www.reddit.com/r/pathofexile/comments/p1/t/${id.slice(3)}/?context=10)] - *hi*\n\n`).join('')
+
+test('with no record in Redis, the summary already in the thread is continued', async () => {
+  const {deps, comments, own, existing, kv} = fakes()
+  const sticky = existing(pythonSummary('t1_a'))
+  own.set('t3_p1', [sticky])
+  assert.equal(await aggregate(c('t1_b', 'Dave_GGG', 'new reply'), roster, deps), true)
+  assert.equal(comments.size, 1)
+  assert.ok(sticky.body.includes('/t/a/') && sticky.body.includes('*new reply*'))
+  assert.equal(kv.get('agg:t3_p1'), sticky.id)
+})
+
+test('the newest comment of an adopted chain is the one continued', async () => {
+  const {deps, own, existing} = fakes()
+  const head = existing(pythonSummary('t1_a'))
+  const tail = existing(pythonSummary('t1_b'), head.id)
+  own.set('t3_p1', [head, tail])
+  await aggregate(c('t1_c', 'Dave_GGG', 'third'), roster, deps)
+  assert.ok(tail.body.includes('*third*'))
+  assert.ok(!head.body.includes('*third*'))
+})
+
+test('a comment the adopted summary already lists is skipped and marked handled', async () => {
+  const {deps, comments, own, existing, kv, log} = fakes()
+  const sticky = existing(pythonSummary('t1_a'))
+  const before = sticky.body
+  own.set('t3_p1', [sticky])
+  assert.equal(await aggregate(c('t1_a', 'Carol_GGG'), roster, deps), false)
+  assert.equal(sticky.body, before)
+  assert.equal(comments.size, 1)
+  assert.deepEqual(log, [])
+  assert.equal(kv.get('seen:t1_a'), '1')
+})
+
+test('a comment listed higher up a chain is not added again', async () => {
+  const {deps, own, existing} = fakes()
+  const head = existing(pythonSummary('t1_a'))
+  const tail = existing(pythonSummary('t1_b'), head.id)
+  own.set('t3_p1', [head, tail])
+  assert.equal(await aggregate(c('t1_a', 'Carol_GGG'), roster, deps), false)
+})
+
+test('a removed summary is not adopted', async () => {
+  const {deps, comments, own, existing} = fakes()
+  const sticky = existing(pythonSummary('t1_a'))
+  sticky.removed = true
+  own.set('t3_p1', [sticky])
+  assert.equal(await aggregate(c('t1_b', 'Dave_GGG'), roster, deps), true)
+  assert.equal(comments.size, 2)
+  assert.ok(!sticky.body.includes('Dave_GGG'))
+})
+
+test('if looking for an existing summary fails, a new one is started', async () => {
+  const {deps, comments} = fakes()
+  deps.reddit.findOwnSummary = async () => { throw new Error('500') }
+  assert.equal(await aggregate(c('t1_a', 'Carol_GGG'), roster, deps), true)
+  assert.equal(comments.size, 1)
 })

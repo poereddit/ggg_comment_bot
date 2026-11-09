@@ -1,6 +1,7 @@
 import {context, reddit as realReddit, redis as realRedis, settings} from '@devvit/web/server'
+import type {T3} from '@devvit/web/shared'
 import {
-  DEFAULT_ROSTER, MAX_AGE_MS, createSnippet, formatLine, isEmployee, isFresh, parseRoster, planAppend,
+  DEFAULT_ROSTER, HEADER, MAX_AGE_MS, createSnippet, formatLine, isEmployee, isFresh, parseRoster, planAppend,
 } from '../shared/aggregate.ts'
 
 export type SeenComment = {
@@ -43,9 +44,53 @@ export type Deps = {
   reddit: {
     getCommentById(id: string): Promise<CommentLike>
     submitComment(opts: {id: string; text: string; runAs: 'APP'}): Promise<CommentLike>
+    // The app account's existing summary in a post, stickied head first, or [] if there is none.
+    findOwnSummary(postId: string): Promise<CommentLike[]>
   }
 }
-const realDeps = {redis: realRedis, reddit: realReddit} as unknown as Deps
+
+const sameName = (a: string | undefined, b: string | undefined) => !!a && !!b && a.toLowerCase() === b.toLowerCase()
+
+// Not cached: the account can be renamed while the app is running.
+export async function getAppUsername(): Promise<string | undefined> {
+  return (await realReddit.getAppUser())?.username
+}
+
+async function findOwnSummary(postId: string): Promise<CommentLike[]> {
+  const me = await getAppUsername()
+  if (!me) return []
+  const ours = (c: {authorName: string; body: string}) => sameName(c.authorName, me) && c.body.startsWith(HEADER)
+  // A stickied comment is listed first whatever the sort, so a few top-level comments are enough.
+  const top = await realReddit.getComments({postId: postId as T3, limit: 5, pageSize: 5}).all()
+  let cur = top.find(c => c.stickied && ours(c))
+  const chain = []
+  while (cur && chain.length < 25) {
+    chain.push(cur)
+    const replies = await realReddit.getComments({postId: postId as T3, commentId: cur.id, limit: 100, pageSize: 100}).all()
+    cur = replies.find(ours)
+  }
+  return chain as unknown as CommentLike[]
+}
+
+const realDeps = {
+  redis: realRedis,
+  reddit: {
+    getCommentById: (id: string) => realReddit.getCommentById(id as `t1_${string}`),
+    submitComment: (opts: {id: string; text: string; runAs: 'APP'}) => realReddit.submitComment(opts as never),
+    findOwnSummary,
+  },
+} as unknown as Deps
+
+// The subreddit can tell the app to stay quiet until its account has a given name. That lets the app
+// be installed next to the Python bot and take over the moment Reddit moves u/GGGCommentBot to it.
+export async function mayPost(): Promise<boolean> {
+  const wanted = ((await settings.get<string>('onlyAs')) ?? '').trim().replace(/^\/?u\//i, '')
+  if (!wanted) return true
+  const me = await getAppUsername()
+  if (sameName(me, wanted)) return true
+  console.log(`waiting; the app's account is u/${me}, onlyAs is u/${wanted}`)
+  return false
+}
 
 const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms))
 
@@ -77,23 +122,50 @@ async function withPostLock<T>(redis: Deps['redis'], postId: string, fn: () => P
 // keeps its text, so the removed and spam flags are checked as well as the placeholder text.
 const isGone = (c: CommentLike) => c.removed === true || c.spam === true || c.body === '[deleted]' || c.body === '[removed]'
 
-async function findAggregation({redis, reddit}: Deps, postId: string) {
+// The newest comment of a thread's summary, plus the text of every comment in it.
+type Summary = {latest: CommentLike; bodies: string[]}
+
+async function findAggregation(deps: Deps, postId: string): Promise<Summary | null> {
+  const {redis, reddit} = deps
   const id = await redis.get(aggKey(postId))
-  if (!id) return null
+  if (!id) return adopt(deps, postId)
   try {
     const comment = await reddit.getCommentById(id)
     // agg: points at the newest comment in the chain. If it or any comment above it, up to the
     // stickied head, was removed, the summary starts again instead of continuing under it.
+    const bodies: string[] = []
     let cur: CommentLike = comment
     for (let depth = 0; depth < 25; depth++) {
       if (isGone(cur)) return null
+      bodies.push(cur.body)
       if (!cur.parentId || !cur.parentId.startsWith('t1_')) break
       cur = await reddit.getCommentById(cur.parentId)
     }
-    return comment
+    return {latest: comment, bodies}
   } catch {
     return null // inaccessible: start a new one
   }
+}
+
+// Redis has no summary for this thread, but the app's account may already have one there: the Python
+// bot's summaries, once Reddit moves u/GGGCommentBot to the app, or ours from before a reinstall.
+// Continuing it keeps one summary per thread.
+async function adopt({reddit}: Deps, postId: string): Promise<Summary | null> {
+  let chain: CommentLike[]
+  try {
+    chain = await reddit.findOwnSummary(postId)
+  } catch {
+    return null
+  }
+  if (!chain.length || chain.some(isGone)) return null
+  console.log(`adopted the summary already in ${postId}; comments=${chain.length} latest=${chain.at(-1)!.id}`)
+  return {latest: chain.at(-1)!, bodies: chain.map(c => c.body)}
+}
+
+// Lines link to the comment, so its id in a summary means the comment is already listed.
+const listedIn = (bodies: string[], commentId: string) => {
+  const needle = `/${commentId.replace(/^t1_/, '')}/`
+  return bodies.some(b => b.includes(needle))
 }
 
 // Returns true if the comment was added to the thread's summary comment.
@@ -109,7 +181,14 @@ export async function aggregate(c: SeenComment, roster: Set<string>, deps: Deps 
       permalink: c.permalink,
       snippet: createSnippet(c.body),
     })
-    const existing = await findAggregation(deps, c.postId)
+    const summary = await findAggregation(deps, c.postId)
+    const existing = summary?.latest
+    if (summary && listedIn(summary.bodies, c.id)) {
+      await redis.set(aggKey(c.postId), summary.latest.id)
+      await redis.expire(aggKey(c.postId), AGG_TTL_S)
+      await markSeen(redis, c.id)
+      return false
+    }
     const plan = planAppend(existing?.body ?? null, line)
 
     let latestId: string
@@ -131,14 +210,19 @@ export async function aggregate(c: SeenComment, roster: Set<string>, deps: Deps 
 
     await redis.set(aggKey(c.postId), latestId)
     await redis.expire(aggKey(c.postId), AGG_TTL_S)
-    await redis.set(seenKey(c.id), '1')
-    await redis.expire(seenKey(c.id), SEEN_TTL_S)
+    await markSeen(redis, c.id)
     return true
   })
 }
 
+async function markSeen(redis: Deps['redis'], commentId: string) {
+  await redis.set(seenKey(commentId), '1')
+  await redis.expire(seenKey(commentId), SEEN_TTL_S)
+}
+
 // Safety net for triggers that never arrived: look at each employee's own recent comments.
-export async function sweep(): Promise<{checked: number; added: number}> {
+export async function sweep(): Promise<{checked: number; added: number; waiting?: true}> {
+  if (!(await mayPost())) return {checked: 0, added: 0, waiting: true}
   const roster = await loadRoster()
   const sub = context.subredditName.toLowerCase()
   const now = Date.now()

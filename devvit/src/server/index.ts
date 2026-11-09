@@ -1,7 +1,8 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {createServer, getServerPort} from '@devvit/web/server'
 import type {OnCommentCreateRequest} from '@devvit/web/shared'
-import {aggregate, loadRoster, sweep} from './aggregator.ts'
+import {isEmployee} from '../shared/aggregate.ts'
+import {aggregate, loadRoster, mayPost, sweep} from './aggregator.ts'
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -24,8 +25,11 @@ async function onCommentCreate(req: IncomingMessage): Promise<unknown> {
   if (!c) return {status: 'ignored'}
   // Cheap exit for the vast majority of comments, before any Reddit or Redis calls.
   const roster = await loadRoster()
+  const author = event.author?.name ?? c.author
+  if (!isEmployee(author, roster)) return {status: 'skipped'}
+  if (!(await mayPost())) return {status: 'waiting'}
   const added = await aggregate(
-    {id: c.id, author: event.author?.name ?? c.author, body: c.body, permalink: c.permalink, postId: c.postId, createdAtMs: c.createdAt},
+    {id: c.id, author, body: c.body, permalink: c.permalink, postId: c.postId, createdAtMs: c.createdAt},
     roster,
   )
   console.log(`comment-create; roster=${roster.size} result=${added ? 'aggregated' : 'skipped'}`)
@@ -34,7 +38,10 @@ async function onCommentCreate(req: IncomingMessage): Promise<unknown> {
 
 const server = createServer(async (req, res) => {
   try {
-    if (req.method !== 'POST') return send(res, 404, {error: 'not found'})
+    if (req.method !== 'POST') {
+      console.error(`unexpected request; ${req.method} ${req.url}`)
+      return send(res, 404, {error: 'not found'})
+    }
     switch (req.url) {
       case '/internal/triggers/on-comment-create':
         return send(res, 200, await onCommentCreate(req))
@@ -45,6 +52,7 @@ const server = createServer(async (req, res) => {
         return send(res, 200, result)
       }
       default:
+        console.error(`unexpected request; ${req.method} ${req.url}`)
         return send(res, 404, {error: 'not found'})
     }
   } catch (err) {

@@ -14,6 +14,8 @@ Tested on Devvit 0.15.2 in a private test subreddit. Not installed on a live sub
 - A comment is marked as handled only after Reddit accepts the edit, so a failure is picked up again by the next sweep.
 - A short Redis lock per thread stops two comments that arrive together from overwriting each other.
 - The roster is a per-subreddit setting (one username per line). Mods can edit it without a redeploy.
+- When Redis has no record of a thread's summary, the app looks for a stickied summary its own account already posted there and continues it, skipping replies it already lists. Once u/GGGCommentBot is the app's account, that's the Python bot's summary.
+- The `onlyAs` setting keeps the app quiet until its account has that name, so it can be installed next to the Python bot and take over when the account moves.
 
 ## Differences from the Python bot
 
