@@ -6,6 +6,7 @@ import {type Embed, commentEmbed, isFresh, postEmbed} from '../shared/tracker.ts
 
 const SENT_TTL_S = 7 * 24 * 60 * 60
 const sentKey = (id: string) => `tracked:${id}`
+const SINCE_KEY = 'tracker:since'
 
 export type TrackerDeps = {
   redis: {
@@ -43,6 +44,14 @@ export async function track(id: string, createdAtMs: number, embed: () => Promis
   if (!(await deps.enabled())) return false
   const url = await deps.webhook()
   if (!url) return false
+  // Items from before the tracker was first turned on in this subreddit were already posted
+  // by the old relay, so only newer ones go out.
+  const since = Number(await deps.redis.get(SINCE_KEY)) || 0
+  if (!since) {
+    await deps.redis.set(SINCE_KEY, String(Date.now()))
+    return false
+  }
+  if (createdAtMs < since) return false
   const key = sentKey(id)
   if ((await deps.redis.incrBy(key, 1)) !== 1) return false
   await deps.redis.expire(key, SENT_TTL_S)

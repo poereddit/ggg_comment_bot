@@ -16,6 +16,7 @@ function deps(over: Partial<TrackerDeps> = {}) {
     send: async (_u, b) => { sent.push(b); return {ok: true, status: 200} },
     ...over,
   }
+  kv.set('tracker:since', '1')
   return {d, sent, kv}
 }
 const embed = async () => ({author: {name: 'a', url: 'u', icon_url: 'i'}, title: 't', url: 'u', color: 1, timestamp: 'x'})
@@ -44,5 +45,15 @@ test('a failed send is retried by the next attempt', async () => {
   await assert.rejects(track('t1_a', Date.now(), embed, d))
   fail = false
   assert.equal(await track('t1_a', Date.now(), embed, d), true)
+  assert.equal(sent.length, 1)
+})
+
+test('items from before the tracker was turned on are skipped', async () => {
+  const {d, sent, kv} = deps()
+  kv.delete('tracker:since')
+  const old = Date.now() - 1000
+  assert.equal(await track('t1_old', old, embed, d), false)
+  assert.equal(await track('t1_old', old, embed, d), false)
+  assert.equal(await track('t1_new', Date.now() + 1, embed, d), true)
   assert.equal(sent.length, 1)
 })
