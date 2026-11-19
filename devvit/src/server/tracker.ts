@@ -46,10 +46,11 @@ export async function track(id: string, createdAtMs: number, embed: () => Promis
   if (!url) return false
   // Items from before the tracker was first turned on in this subreddit were already posted
   // by the old relay, so only newer ones go out.
-  const since = Number(await deps.redis.get(SINCE_KEY)) || 0
+  let since = Number(await deps.redis.get(SINCE_KEY)) || 0
   if (!since) {
-    await deps.redis.set(SINCE_KEY, String(Date.now()))
-    return false
+    // A couple of minutes back, so the item that arrives with the first trigger still counts.
+    since = Date.now() - 2 * 60 * 1000
+    await deps.redis.set(SINCE_KEY, String(since))
   }
   if (createdAtMs < since) return false
   const key = sentKey(id)

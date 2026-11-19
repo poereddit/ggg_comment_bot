@@ -51,9 +51,8 @@ test('a failed send is retried by the next attempt', async () => {
 test('items from before the tracker was turned on are skipped', async () => {
   const {d, sent, kv} = deps()
   kv.delete('tracker:since')
-  const old = Date.now() - 1000
+  const old = Date.now() - 10 * 60 * 1000
+  assert.equal(await track('t1_new', Date.now() - 1000, embed, d), true)
   assert.equal(await track('t1_old', old, embed, d), false)
-  assert.equal(await track('t1_old', old, embed, d), false)
-  assert.equal(await track('t1_new', Date.now() + 1, embed, d), true)
   assert.equal(sent.length, 1)
 })
