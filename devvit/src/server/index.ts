@@ -1,8 +1,9 @@
 import type {IncomingMessage, ServerResponse} from 'node:http'
 import {createServer, getServerPort} from '@devvit/web/server'
-import type {OnCommentCreateRequest} from '@devvit/web/shared'
+import type {OnCommentCreateRequest, OnPostSubmitRequest} from '@devvit/web/shared'
 import {isEmployee} from '../shared/aggregate.ts'
-import {aggregate, loadRoster, mayPost, sweep} from './aggregator.ts'
+import {aggregate, loadRoster, logTrackError, mayPost, sweep} from './aggregator.ts'
+import {trackComment, trackPost} from './tracker.ts'
 
 async function readJson(req: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = []
@@ -27,6 +28,8 @@ async function onCommentCreate(req: IncomingMessage): Promise<unknown> {
   const roster = await loadRoster()
   const author = event.author?.name ?? c.author
   if (!isEmployee(author, roster)) return {status: 'skipped'}
+  const tracked = await trackComment(c.id).catch(logTrackError(c.id))
+  if (tracked) console.log(`tracker; posted ${c.id}`)
   if (!(await mayPost())) return {status: 'waiting'}
   const added = await aggregate(
     {id: c.id, author, body: c.body, permalink: c.permalink, postId: c.postId, createdAtMs: c.createdAt},
@@ -34,6 +37,17 @@ async function onCommentCreate(req: IncomingMessage): Promise<unknown> {
   )
   console.log(`comment-create; roster=${roster.size} result=${added ? 'aggregated' : 'skipped'}`)
   return {status: added ? 'aggregated' : 'skipped'}
+}
+
+async function onPostSubmit(req: IncomingMessage): Promise<unknown> {
+  const event = (await readJson(req)) as OnPostSubmitRequest
+  const p = event.post
+  if (!p) return {status: 'ignored'}
+  const roster = await loadRoster()
+  if (!isEmployee(event.author?.name, roster)) return {status: 'skipped'}
+  const tracked = await trackPost(p.id).catch(logTrackError(p.id))
+  console.log(`post-submit; id=${p.id} author=${event.author?.name} tracked=${tracked}`)
+  return {status: tracked ? 'tracked' : 'skipped'}
 }
 
 const server = createServer(async (req, res) => {
@@ -45,6 +59,8 @@ const server = createServer(async (req, res) => {
     switch (req.url) {
       case '/internal/triggers/on-comment-create':
         return send(res, 200, await onCommentCreate(req))
+      case '/internal/triggers/on-post-submit':
+        return send(res, 200, await onPostSubmit(req))
       case '/internal/jobs/sweep':
       {
         const result = await sweep()

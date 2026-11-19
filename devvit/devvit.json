@@ -6,10 +6,17 @@
     "reddit": {
       "scope": "user"
     },
-    "redis": true
+    "redis": true,
+    "http": {
+      "enable": true,
+      "domains": [
+        "discord.com"
+      ]
+    }
   },
   "triggers": {
-    "onCommentCreate": "/internal/triggers/on-comment-create"
+    "onCommentCreate": "/internal/triggers/on-comment-create",
+    "onPostSubmit": "/internal/triggers/on-post-submit"
   },
   "scheduler": {
     "tasks": {
@@ -31,6 +38,20 @@
         "type": "string",
         "label": "Only post when the app's account is",
         "helpText": "Leave empty to post as usual. With a username here, the app stays quiet until its account has that name."
+      },
+      "trackerOn": {
+        "type": "boolean",
+        "label": "Send GGG posts and comments to Discord",
+        "helpText": "Posts each GGG employee post and comment here to the Discord webhook set by the developer.",
+        "defaultValue": false
+      }
+    },
+    "global": {
+      "trackerWebhook": {
+        "type": "string",
+        "label": "Discord webhook URL of #ggg-tracker",
+        "helpText": "GGG employee posts and comments are posted here when a subreddit turns the tracker on.",
+        "isSecret": true
       }
     }
   },

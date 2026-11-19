@@ -1,5 +1,6 @@
 import {context, reddit as realReddit, redis as realRedis, settings} from '@devvit/web/server'
 import type {T3} from '@devvit/web/shared'
+import {trackComment, trackPost} from './tracker.ts'
 import {
   DEFAULT_ROSTER, HEADER, MAX_AGE_MS, createSnippet, formatLine, isEmployee, isFresh, parseRoster, planAppend,
 } from '../shared/aggregate.ts'
@@ -221,19 +222,27 @@ async function markSeen(redis: Deps['redis'], commentId: string) {
 }
 
 // Safety net for triggers that never arrived: look at each employee's own recent comments.
-export async function sweep(): Promise<{checked: number; added: number; waiting?: true}> {
-  if (!(await mayPost())) return {checked: 0, added: 0, waiting: true}
+export async function sweep(): Promise<{checked: number; added: number; tracked: number; waiting?: true}> {
+  const posting = await mayPost()
   const roster = await loadRoster()
   const sub = context.subredditName.toLowerCase()
   const now = Date.now()
   let checked = 0
   let added = 0
+  let tracked = 0
   for (const username of roster) {
     try {
-      const comments = await realReddit.getCommentsByUser({username, sort: 'new', limit: 25}).all()
-      for (const comment of comments) {
-        if (comment.subredditName.toLowerCase() !== sub) continue
-        if (!isFresh(comment.createdAt.getTime(), now, MAX_AGE_MS)) continue
+      const items = await realReddit.getCommentsAndPostsByUser({username, sort: 'new', limit: 25}).all()
+      for (const item of items) {
+        if (item.subredditName.toLowerCase() !== sub) continue
+        if (!isFresh(item.createdAt.getTime(), now, MAX_AGE_MS)) continue
+        if (item.id.startsWith('t3_')) {
+          if (await trackPost(item.id).catch(logTrackError(item.id))) tracked++
+          continue
+        }
+        const comment = item as unknown as {id: string; authorName: string; body: string; permalink: string; postId: string; createdAt: Date}
+        if (await trackComment(comment.id).catch(logTrackError(comment.id))) tracked++
+        if (!posting) continue
         checked++
         const did = await aggregate(
           {
@@ -252,5 +261,10 @@ export async function sweep(): Promise<{checked: number; added: number; waiting?
       console.error(`sweep failed for u/${username}: ${err instanceof Error ? err.message : err}`)
     }
   }
-  return {checked, added}
+  return posting ? {checked, added, tracked} : {checked, added, tracked, waiting: true}
+}
+
+export const logTrackError = (id: string) => (err: unknown) => {
+  console.error(`tracker failed for ${id}: ${err instanceof Error ? err.message : err}`)
+  return false
 }
